@@ -6,7 +6,6 @@ import plotly.graph_objects as go
 from io import BytesIO
 from datetime import datetime
 
-# ----------------- Sayfa Ayarları -----------------
 st.set_page_config(page_title="Sezonluk Talep Tahminleme", layout="wide")
 
 st.markdown(
@@ -21,21 +20,17 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ----------------- Yardımcı Fonksiyonlar -----------------
 @st.cache_data
 def load_uploaded_excel(file):
     df = pd.read_excel(file)
-    # Beklenen kolon isimlerini normalize et
     df = df.rename(columns={
         'tarih':'Tarih','Tarih':'Tarih',
         'urun':'Ürün','Urün':'Ürün','Ürün':'Ürün','product':'Ürün',
         'satis':'Satış','Satis':'Satış','Sales':'Satış'
     })
-    # Tip dönüşümleri
     df['Tarih'] = pd.to_datetime(df['Tarih'])
     df['Ürün'] = df['Ürün'].astype(str)
     df['Satış'] = pd.to_numeric(df['Satış'], errors='coerce').fillna(0)
-    # Aylık toplulaştır
     df = (
         df.set_index('Tarih')
           .groupby('Ürün')
@@ -76,9 +71,7 @@ def seasonal_labels():
         'Sonbahar': [9,10,11]
     }
 
-# Basit tahmin (moving average + mevsimsel katsayı)
 def simple_forecast(series: pd.Series, horizon: int = 6):
-    # 12 aylık mevsimsel ortalamalar
     by_month = series.groupby(series.index.month).mean()
     last12 = series.tail(12)
     base = last12.mean() if len(last12)>0 else series.mean()
@@ -95,7 +88,6 @@ def simple_forecast(series: pd.Series, horizon: int = 6):
     fdf = pd.DataFrame({'Tarih': idx, 'Tahmin': fc})
     return fdf
 
-# Prophet ile tahmin (varsa)
 def prophet_forecast(df_prod: pd.DataFrame, horizon: int = 6):
     try:
         from prophet import Prophet
@@ -108,13 +100,11 @@ def prophet_forecast(df_prod: pd.DataFrame, horizon: int = 6):
     fc = m.predict(future)
     return fc[['ds','yhat','yhat_lower','yhat_upper']], None
 
-# ----------------- Veri Girişi (Sayfa: Yükle) -----------------
 with st.sidebar:
     st.header("📂 Veri Kaynağı")
     f = st.file_uploader("Excel Yükle (Kolonlar: Tarih, Ürün, Satış)", type=["xlsx","xls","csv"]) 
     if f is not None and f.name.lower().endswith('.csv'):
         raw = pd.read_csv(f)
-        # CSV için de aynı normalize fonksiyonunu kullan
         tmp = BytesIO()
         raw.to_excel(tmp, index=False)
         tmp.seek(0)
@@ -128,14 +118,11 @@ with st.sidebar:
     pages = ["Dashboard","Ürün Tahmini","Sezon Analizi","Raporlar","Ayarlar"]
     page = st.radio("Sayfa", pages, index=0)
 
-# Ortak hazır veriler
 all_products = sorted(df_data['Ürün'].unique())
 df_data = df_data.sort_values('Tarih')
 
-# ----------------- DASHBOARD -----------------
 if page == "Dashboard":
     st.title("📊 Genel Dashboard")
-    # KPI'lar
     total_sales = int(df_data['Satış'].sum())
     months = df_data['Tarih'].dt.to_period('M').nunique()
     avg_month = int(total_sales / max(1, months))
@@ -164,7 +151,6 @@ if page == "Dashboard":
     fig2 = px.imshow(pivot, aspect='auto', labels=dict(color='Satış'))
     st.plotly_chart(fig2, use_container_width=True)
 
-# ----------------- ÜRÜN TAHMİNİ -----------------
 elif page == "Ürün Tahmini":
     st.title("🔮 Ürün Bazlı Tahmin ve Sipariş Önerisi")
     colA, colB, colC = st.columns([2,1,1])
@@ -193,7 +179,6 @@ elif page == "Ürün Tahmini":
         fc_simple = simple_forecast(dfp.set_index('Tarih')['Satış'], horizon)
         fc_plot = fc_simple
 
-    # Grafik
     st.subheader(f"{prod} Satış Geçmişi ve Tahmin")
     hist = dfp[['Tarih','Satış']]
     fig = go.Figure()
@@ -202,7 +187,6 @@ elif page == "Ürün Tahmini":
     fig.update_layout(margin=dict(l=0,r=0,t=30,b=0))
     st.plotly_chart(fig, use_container_width=True)
 
-    # Sipariş önerisi
     total_forecast = int(np.ceil(fc_plot['Tahmin'].sum()))
     need = max(0, total_forecast - int(stock))
 
@@ -213,7 +197,6 @@ elif page == "Ürün Tahmini":
 
     st.dataframe(fc_plot.rename(columns={'Tahmin':'Tahmini Satış'}), use_container_width=True)
 
-# ----------------- SEZON ANALİZİ -----------------
 elif page == "Sezon Analizi":
     st.title("🍂 Sezon Bazlı Talep Analizi")
     seasons = seasonal_labels()
@@ -236,7 +219,6 @@ elif page == "Sezon Analizi":
     figc = px.line(comp, x='Yıl', y='Satış', color='Ürün', markers=True)
     st.plotly_chart(figc, use_container_width=True)
 
-# ----------------- RAPORLAR -----------------
 elif page == "Raporlar":
     st.title("📄 Raporlar ve Dışa Aktarım")
     st.caption("Seçilen sezona göre bir sonraki dönem için sipariş öneri raporu oluştur.")
@@ -245,13 +227,11 @@ elif page == "Raporlar":
     months = seasons[season]
     horizon = len(months)
 
-    # Tüm ürünler için basit tahminle sezonsal tahmin
     rep_rows = []
     for p in all_products:
         dfp = df_data[df_data['Ürün']==p].copy()
         dfp = dfp.set_index('Tarih').asfreq('M').fillna(0)
         fc = simple_forecast(dfp['Satış'], horizon)
-        # Bir sonraki sezon aylarına denk gelen tahminler: zaten horizon kadar
         total_fc = int(np.ceil(fc['Tahmin'].sum()))
         rep_rows.append([p, total_fc])
     rep = pd.DataFrame(rep_rows, columns=['Ürün','Tahmini Talep'])
@@ -275,7 +255,6 @@ elif page == "Raporlar":
         st.subheader("📦 Sipariş Öneri Tablosu")
         st.dataframe(rep, use_container_width=True)
 
-        # İndirme - Excel ve CSV
         try:
             bio = BytesIO()
             with pd.ExcelWriter(bio, engine='xlsxwriter') as writer:
@@ -286,7 +265,6 @@ elif page == "Raporlar":
             st.info("Excel oluşturulamadı, CSV indirabilirsiniz.")
         st.download_button("CSV İndir", data=rep.to_csv(index=False), file_name="siparis_oneri.csv", mime="text/csv")
 
-# ----------------- AYARLAR -----------------
 elif page == "Ayarlar":
     st.title("⚙️ Ayarlar & Yardım")
     st.markdown("""
